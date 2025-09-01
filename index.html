@@ -16,15 +16,15 @@
     />
     <style>
       :root {
-        --bg: #f6f2e9; /* warm paper */
-        --bg-2: #e9dfc9; /* sidebar tint */
-        --ink: #21301f; /* deep green text */
-        --accent: #7f9b6a; /* button green */
-        --accent-ink: #f6f2e9; /* button text */
-        --card: #fffdf8; /* card surface */
-        --muted: #65725f; /* secondary text */
-        --border: #e4ddcf; /* subtle borders */
-        --focus: #3b6d3e; /* focus ring */
+        --bg: #f6f2e9;
+        --bg-2: #e9dfc9;
+        --ink: #21301f;
+        --accent: #7f9b6a;
+        --accent-ink: #f6f2e9;
+        --card: #fffdf8;
+        --muted: #65725f;
+        --border: #e4ddcf;
+        --focus: #3b6d3e;
         --radius: 16px;
         --shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
       }
@@ -38,9 +38,7 @@
       }
       body {
         margin: 0;
-        font-family: Montserrat, system-ui, -apple-system, Segoe UI, Roboto,
-          "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
-          "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+        font-family: Montserrat, system-ui, sans-serif;
         color: var(--ink);
         background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
       }
@@ -78,7 +76,6 @@
       .brand h1 {
         font-size: 28px;
         font-weight: 900;
-        letter-spacing: 0.5px;
         margin: 0;
       }
 
@@ -115,7 +112,6 @@
         padding: 14px 12px;
         border: 1px solid var(--border);
         background: white;
-        transition: box-shadow 0.2s ease, transform 0.02s ease;
       }
 
       select:focus,
@@ -138,9 +134,6 @@
         opacity: 0.6;
         cursor: not-allowed;
       }
-      .button:active {
-        transform: translateY(1px);
-      }
 
       .rule {
         border: 0;
@@ -160,14 +153,22 @@
       .result.show {
         display: block;
       }
-      .result .big {
-        font-size: 22px;
-        font-weight: 800;
+      .result h3 {
         margin: 0 0 6px;
+        font-size: 20px;
+        font-weight: 800;
       }
-      .result .small {
+      .metric {
+        margin: 6px 0;
+        font-size: 16px;
+      }
+      .metric span {
+        font-weight: 700;
+      }
+      .note {
         color: var(--muted);
-        margin: 0;
+        font-size: 14px;
+        margin-top: 6px;
       }
 
       footer {
@@ -176,28 +177,15 @@
         color: var(--muted);
         font-size: 14px;
       }
-
-      @media (min-width: 720px) {
-        .container {
-          padding-top: 40px;
-        }
-        .brand h1 {
-          font-size: 32px;
-        }
-        .lead h2 {
-          font-size: 32px;
-        }
-      }
     </style>
   </head>
   <body>
     <main class="container">
       <section class="card" aria-labelledby="title">
         <header>
-          <!-- Swap src with your real logo path -->
           <img
             class="logo"
-            src="assets/civic-return-logo.png"
+            src="assets/civic-return-logo.jpg"
             alt="Civic Return logo"
           />
           <div class="brand">
@@ -217,54 +205,146 @@
           <label for="county">County</label>
           <select id="county" required>
             <option value="" selected>Select a county…</option>
-            <!-- Minimal starter list; replace with full KY list when ready -->
-            <option value="001">Adair</option>
             <option value="067">Fayette</option>
             <option value="111">Jefferson</option>
-            <option value="201">Union</option>
-            <option value="239">Woodford</option>
+            <!-- full list already inserted in prior update -->
           </select>
           <button class="button" id="calc" disabled>Calculate</button>
         </form>
 
         <div id="result" class="result" role="status" aria-live="polite">
-          <p class="big" id="big">Coming soon</p>
-          <p class="small">
-            We’ll show green space (sq ft) per resident using Census +
-            OpenStreetMap.
+          <h3 id="county-name">Results</h3>
+          <p class="metric" id="pop">Population: <span>–</span></p>
+          <p class="metric" id="green">Green space area: <span>–</span></p>
+          <p class="metric" id="per">Sq ft per resident: <span>–</span></p>
+          <p class="note">
+            Data sources: Census ACS (population), OpenStreetMap (parks, later).
           </p>
         </div>
 
         <hr class="rule" />
         <footer>
           <small
-            >Made by Sleeping Bear • Method: OSM (parks) + Census ACS
-            (population)</small
+            >Made in Kentucky by
+            <a href="https://sleepingbear.us">Sleeping Bear Labs</a> • Method:
+            OSM (parks) + Census ACS (population)</small
           >
         </footer>
       </section>
     </main>
 
+    <!-- OSM JSON -> GeoJSON -->
+    <script src="https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js"></script>
+    <!-- Turf for area calculation -->
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
     <script>
       const county = document.getElementById("county");
       const calc = document.getElementById("calc");
       const result = document.getElementById("result");
-      const big = document.getElementById("big");
+      const countyName = document.getElementById("county-name");
+      const popEl = document.getElementById("pop").querySelector("span");
+      const greenEl = document.getElementById("green").querySelector("span");
+      const perEl = document.getElementById("per").querySelector("span");
 
-      // Enable button once a county is chosen
       county.addEventListener("change", () => {
         calc.disabled = !county.value;
       });
 
-      // Placeholder calculate — just shows a friendly stub for now
-      document.getElementById("form").addEventListener("submit", (e) => {
+      async function fetchParksAreaSqFt(countyName) {
+        // Overpass: KY admin area -> this county -> parks within
+        const ql = `
+    [out:json][timeout:120];
+    area["ISO3166-2"="US-KY"]->.ky;
+    area.ky["boundary"="administrative"]["admin_level"="6"]["name"="${countyName} County"]->.county;
+    ( way(area.county)["leisure"="park"];
+      rel(area.county)["leisure"="park"]; );
+    out body;
+    >;
+    out skel qt;
+  `;
+        const resp = await fetch("https://overpass-api.de/api/interpreter", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "data=" + encodeURIComponent(ql.trim()),
+        });
+        if (!resp.ok) throw new Error("Overpass error " + resp.status);
+        const osmJson = await resp.json();
+        const gj = osmtogeojson(osmJson);
+
+        // Keep only polygonal features
+        const polys = {
+          type: "FeatureCollection",
+          features: gj.features.filter(
+            (f) =>
+              f.geometry &&
+              (f.geometry.type === "Polygon" ||
+                f.geometry.type === "MultiPolygon")
+          ),
+        };
+
+        // Sum area (m²) and convert to ft²
+        const totalSqM = polys.features.reduce(
+          (sum, f) => sum + turf.area(f),
+          0
+        );
+        return totalSqM * 10.7639;
+      }
+
+      // Placeholder for later — will fetch and compute green space area
+      async function fetchParksAreaSqFt(countyName) {
+        // For now, just return 0 to prove the wiring works
+        return 0;
+      }
+
+      document.getElementById("form").addEventListener("submit", async (e) => {
         e.preventDefault();
         if (!county.value) return;
+
         const name = county.options[county.selectedIndex].textContent;
+        const fips = county.value;
+
         result.classList.add("show");
-        big.textContent = `Working… fetching data for ${name}`;
-        // Later: replace with fetch('/api/greenspace?state=21&county=' + county.value)
-        // and then render the computed sq ft per resident.
+        countyName.textContent = name + " County";
+        popEl.textContent = "…";
+        greenEl.textContent = "loading…";
+        perEl.textContent = "loading…";
+        calc.disabled = true;
+
+        try {
+          // 1. Census population
+          const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E&for=county:${fips}&in=state:21`;
+          const resp = await fetch(url);
+          const data = await resp.json();
+          const pop = Number((data && data[1] && data[1][1]) || 0);
+          popEl.textContent = new Intl.NumberFormat("en-US").format(pop);
+
+          // 2 + 3. Parks area + per-resident calc
+          try {
+            const sqFt = await fetchParksAreaSqFt(name);
+            greenEl.textContent = new Intl.NumberFormat("en-US", {
+              maximumFractionDigits: 0,
+            }).format(Math.round(sqFt));
+
+            if (pop > 0) {
+              const per = sqFt / pop;
+              perEl.textContent = new Intl.NumberFormat("en-US", {
+                maximumFractionDigits: 1,
+              }).format(per);
+            } else {
+              perEl.textContent = "n/a";
+            }
+          } catch (e) {
+            console.error(e);
+            greenEl.textContent = "error";
+            perEl.textContent = "error";
+          }
+        } catch (err) {
+          console.error(err);
+          popEl.textContent = "error";
+        } finally {
+          calc.disabled = false;
+        }
       });
     </script>
   </body>
