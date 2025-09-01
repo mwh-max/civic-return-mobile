@@ -205,10 +205,128 @@
           <label for="county">County</label>
           <select id="county" required>
             <option value="" selected>Select a county…</option>
+            <option value="001">Adair</option>
+            <option value="003">Allen</option>
+            <option value="005">Anderson</option>
+            <option value="007">Ballard</option>
+            <option value="009">Barren</option>
+            <option value="011">Bath</option>
+            <option value="013">Bell</option>
+            <option value="015">Boone</option>
+            <option value="017">Bourbon</option>
+            <option value="019">Boyd</option>
+            <option value="021">Boyle</option>
+            <option value="023">Bracken</option>
+            <option value="025">Breathitt</option>
+            <option value="027">Breckinridge</option>
+            <option value="029">Bullitt</option>
+            <option value="031">Butler</option>
+            <option value="033">Caldwell</option>
+            <option value="035">Calloway</option>
+            <option value="037">Campbell</option>
+            <option value="039">Carlisle</option>
+            <option value="041">Carroll</option>
+            <option value="043">Carter</option>
+            <option value="045">Casey</option>
+            <option value="047">Christian</option>
+            <option value="049">Clark</option>
+            <option value="051">Clay</option>
+            <option value="053">Clinton</option>
+            <option value="055">Crittenden</option>
+            <option value="057">Cumberland</option>
+            <option value="059">Daviess</option>
+            <option value="061">Edmonson</option>
+            <option value="063">Elliott</option>
+            <option value="065">Estill</option>
             <option value="067">Fayette</option>
+            <option value="069">Fleming</option>
+            <option value="071">Floyd</option>
+            <option value="073">Franklin</option>
+            <option value="075">Fulton</option>
+            <option value="077">Gallatin</option>
+            <option value="079">Garrard</option>
+            <option value="081">Grant</option>
+            <option value="083">Graves</option>
+            <option value="085">Grayson</option>
+            <option value="087">Green</option>
+            <option value="089">Greenup</option>
+            <option value="091">Hancock</option>
+            <option value="093">Hardin</option>
+            <option value="095">Harlan</option>
+            <option value="097">Harrison</option>
+            <option value="099">Hart</option>
+            <option value="101">Henderson</option>
+            <option value="103">Henry</option>
+            <option value="105">Hickman</option>
+            <option value="107">Hopkins</option>
+            <option value="109">Jackson</option>
             <option value="111">Jefferson</option>
-            <!-- full list already inserted in prior update -->
+            <option value="113">Jessamine</option>
+            <option value="115">Johnson</option>
+            <option value="117">Kenton</option>
+            <option value="119">Knott</option>
+            <option value="121">Knox</option>
+            <option value="123">LaRue</option>
+            <option value="125">Laurel</option>
+            <option value="127">Lawrence</option>
+            <option value="129">Lee</option>
+            <option value="131">Leslie</option>
+            <option value="133">Letcher</option>
+            <option value="135">Lewis</option>
+            <option value="137">Lincoln</option>
+            <option value="139">Livingston</option>
+            <option value="141">Logan</option>
+            <option value="143">Lyon</option>
+            <option value="145">McCracken</option>
+            <option value="147">McCreary</option>
+            <option value="149">McLean</option>
+            <option value="151">Madison</option>
+            <option value="153">Magoffin</option>
+            <option value="155">Marion</option>
+            <option value="157">Marshall</option>
+            <option value="159">Martin</option>
+            <option value="161">Mason</option>
+            <option value="163">Meade</option>
+            <option value="165">Menifee</option>
+            <option value="167">Mercer</option>
+            <option value="169">Metcalfe</option>
+            <option value="171">Monroe</option>
+            <option value="173">Montgomery</option>
+            <option value="175">Morgan</option>
+            <option value="177">Muhlenberg</option>
+            <option value="179">Nelson</option>
+            <option value="181">Nicholas</option>
+            <option value="183">Ohio</option>
+            <option value="185">Oldham</option>
+            <option value="187">Owen</option>
+            <option value="189">Owsley</option>
+            <option value="191">Pendleton</option>
+            <option value="193">Perry</option>
+            <option value="195">Pike</option>
+            <option value="197">Powell</option>
+            <option value="199">Pulaski</option>
+            <option value="201">Robertson</option>
+            <option value="203">Rockcastle</option>
+            <option value="205">Rowan</option>
+            <option value="207">Russell</option>
+            <option value="209">Scott</option>
+            <option value="211">Shelby</option>
+            <option value="213">Simpson</option>
+            <option value="215">Spencer</option>
+            <option value="217">Taylor</option>
+            <option value="219">Todd</option>
+            <option value="221">Trigg</option>
+            <option value="223">Trimble</option>
+            <option value="225">Union</option>
+            <option value="227">Warren</option>
+            <option value="229">Washington</option>
+            <option value="231">Wayne</option>
+            <option value="233">Webster</option>
+            <option value="235">Whitley</option>
+            <option value="237">Wolfe</option>
+            <option value="239">Woodford</option>
           </select>
+
           <button class="button" id="calc" disabled>Calculate</button>
         </form>
 
@@ -251,28 +369,97 @@
         calc.disabled = !county.value;
       });
 
+      // Fetch total PARKS area (sq ft) for a county using Overpass
       async function fetchParksAreaSqFt(countyName) {
-        // Overpass: KY admin area -> this county -> parks within
+        // simple + robust: look up the county area by name
+        const ql = `
+    [out:json][timeout:120];
+    area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;
+    (
+      way(area.county)["leisure"="park"];
+      rel(area.county)["leisure"="park"];
+    );
+    out body;
+    >;
+    out skel qt;
+  `.trim();
+
+        // try two mirrors for reliability
+        const endpoints = [
+          "https://overpass.kumi.systems/api/interpreter",
+          "https://overpass-api.de/api/interpreter",
+        ];
+
+        let lastErr;
+        for (const url of endpoints) {
+          try {
+            const resp = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: "data=" + encodeURIComponent(ql),
+            });
+            if (!resp.ok) {
+              lastErr = new Error("HTTP " + resp.status);
+              continue;
+            }
+
+            const osmJson = await resp.json();
+            const gj = osmtogeojson(osmJson);
+
+            // polygon-only
+            const polys = {
+              type: "FeatureCollection",
+              features: (gj.features || []).filter(
+                (f) =>
+                  f.geometry &&
+                  (f.geometry.type === "Polygon" ||
+                    f.geometry.type === "MultiPolygon")
+              ),
+            };
+
+            const totalSqM = polys.features.reduce(
+              (sum, f) => sum + turf.area(f),
+              0
+            );
+            return totalSqM * 10.7639; // m² -> ft²
+          } catch (e) {
+            lastErr = e; // try next endpoint
+          }
+        }
+        throw lastErr || new Error("Overpass failed");
+      }
+
+      // Placeholder for later — will fetch and compute green space area
+      // Fetch total PARKS area (sq ft) inside a Kentucky county using Overpass
+      // countyName should be plain (e.g., "Fayette", "Jefferson")
+      async function fetchParksAreaSqFt(countyName) {
+        // Overpass QL: find KY, then the county admin area, then all parks within it
         const ql = `
     [out:json][timeout:120];
     area["ISO3166-2"="US-KY"]->.ky;
     area.ky["boundary"="administrative"]["admin_level"="6"]["name"="${countyName} County"]->.county;
-    ( way(area.county)["leisure"="park"];
-      rel(area.county)["leisure"="park"]; );
+    (
+      way(area.county)["leisure"="park"];
+      rel(area.county)["leisure"="park"];
+    );
     out body;
     >;
     out skel qt;
-  `;
+  `.trim();
+
         const resp = await fetch("https://overpass-api.de/api/interpreter", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: "data=" + encodeURIComponent(ql.trim()),
+          body: "data=" + encodeURIComponent(ql),
         });
         if (!resp.ok) throw new Error("Overpass error " + resp.status);
+
         const osmJson = await resp.json();
+
+        // Convert OSM JSON -> GeoJSON
         const gj = osmtogeojson(osmJson);
 
-        // Keep only polygonal features
+        // Keep only polygons
         const polys = {
           type: "FeatureCollection",
           features: gj.features.filter(
@@ -288,13 +475,10 @@
           (sum, f) => sum + turf.area(f),
           0
         );
-        return totalSqM * 10.7639;
-      }
+        const totalSqFt = totalSqM * 10.7639;
 
-      // Placeholder for later — will fetch and compute green space area
-      async function fetchParksAreaSqFt(countyName) {
-        // For now, just return 0 to prove the wiring works
-        return 0;
+        // Return a plain number (can be 0 if no parks tagged)
+        return totalSqFt;
       }
 
       document.getElementById("form").addEventListener("submit", async (e) => {
