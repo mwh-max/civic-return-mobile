@@ -28,7 +28,6 @@
         --radius: 16px;
         --shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
       }
-
       * {
         box-sizing: border-box;
       }
@@ -42,13 +41,11 @@
         color: var(--ink);
         background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
       }
-
       .container {
         max-width: 640px;
         margin: 0 auto;
         padding: 20px 16px 64px;
       }
-
       .card {
         background: var(--card);
         border: 1px solid var(--border);
@@ -56,7 +53,6 @@
         padding: 24px 20px;
         box-shadow: var(--shadow);
       }
-
       header {
         display: flex;
         align-items: center;
@@ -65,7 +61,6 @@
         justify-content: center;
         text-align: center;
       }
-
       .logo {
         width: 96px;
         height: 96px;
@@ -77,8 +72,8 @@
         font-size: 28px;
         font-weight: 900;
         margin: 0;
+        letter-spacing: 0.3px;
       }
-
       .lead {
         text-align: center;
         margin: 12px 8px 24px;
@@ -93,17 +88,14 @@
         color: var(--muted);
         margin: 0;
       }
-
       .form {
         display: grid;
         gap: 14px;
         margin-top: 16px;
       }
-
       label {
         font-weight: 600;
       }
-
       select,
       button {
         width: 100%;
@@ -113,14 +105,12 @@
         border: 1px solid var(--border);
         background: white;
       }
-
       select:focus,
       button:focus {
         outline: none;
         box-shadow: 0 0 0 3px color-mix(in oklab, var(--focus) 35%, white);
         border-color: var(--focus);
       }
-
       .button {
         background: var(--accent);
         color: var(--accent-ink);
@@ -129,19 +119,16 @@
         letter-spacing: 0.3px;
         cursor: pointer;
       }
-
       .button[disabled] {
         opacity: 0.6;
         cursor: not-allowed;
       }
-
       .rule {
         border: 0;
         height: 1px;
         background: var(--border);
         margin: 24px 0;
       }
-
       .result {
         display: none;
         margin-top: 12px;
@@ -163,14 +150,16 @@
         font-size: 16px;
       }
       .metric span {
-        font-weight: 700;
+        font-weight: 800;
       }
       .note {
         color: var(--muted);
         font-size: 14px;
-        margin-top: 6px;
+        margin-top: 8px;
       }
-
+      .hidden {
+        display: none;
+      }
       footer {
         margin-top: 28px;
         text-align: center;
@@ -188,9 +177,7 @@
             src="assets/civic-return-logo.jpg"
             alt="Civic Return logo"
           />
-          <div class="brand">
-            <h1 id="title">CIVIC RETURN</h1>
-          </div>
+          <div class="brand"><h1 id="title">CIVIC RETURN</h1></div>
         </header>
 
         <div class="lead">
@@ -326,161 +313,232 @@
             <option value="237">Wolfe</option>
             <option value="239">Woodford</option>
           </select>
-
           <button class="button" id="calc" disabled>Calculate</button>
         </form>
 
         <div id="result" class="result" role="status" aria-live="polite">
           <h3 id="county-name">Results</h3>
           <p class="metric" id="pop">Population: <span>–</span></p>
+          <p class="metric" id="parkcount">Mapped parks: <span>–</span></p>
           <p class="metric" id="green">Green space area: <span>–</span></p>
           <p class="metric" id="per">Sq ft per resident: <span>–</span></p>
+          <p id="coverageNote" class="note hidden">
+            We couldn’t find mapped park-land areas in OpenStreetMap for this
+            county yet. Parks likely exist, but their boundaries aren’t in the
+            data.
+          </p>
           <p class="note">
-            Data sources: Census ACS (population), OpenStreetMap (parks, later).
+            Sources: Census ACS (population). OpenStreetMap (mapped parks &
+            green areas). Area improves as boundary data is added. KY-only
+            scope.
           </p>
         </div>
 
         <hr class="rule" />
         <footer>
           <small
-            >Made in Kentucky by
-            <a href="https://sleepingbear.us">Sleeping Bear Labs</a> • Method:
-            OSM (parks) + Census ACS (population)</small
+            >Made by Sleeping Bear • Method: OSM polygons (parks & green) +
+            mapped parks count</small
           >
         </footer>
       </section>
     </main>
 
-    <!-- OSM JSON -> GeoJSON -->
-    <script src="https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js"></script>
-    <!-- Turf for area calculation -->
+    <!-- libs MUST be before your script -->
+    <script src="https://unpkg.com/osmtogeojson@2.2.13/osmtogeojson.js"></script>
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
     <script>
+      // ---- DOM
       const county = document.getElementById("county");
       const calc = document.getElementById("calc");
       const result = document.getElementById("result");
       const countyName = document.getElementById("county-name");
       const popEl = document.getElementById("pop").querySelector("span");
+      const parkCountEl = document
+        .getElementById("parkcount")
+        .querySelector("span");
       const greenEl = document.getElementById("green").querySelector("span");
       const perEl = document.getElementById("per").querySelector("span");
+      const coverageNote = document.getElementById("coverageNote");
+
+      const fmt0 = (n) =>
+        new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
+          Math.round(n)
+        );
+      const fmt1 = (n) =>
+        new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
 
       county.addEventListener("change", () => {
         calc.disabled = !county.value;
       });
 
-      // Fetch total PARKS area (sq ft) for a county using Overpass
-      async function fetchParksAreaSqFt(countyName) {
-        // simple + robust: look up the county area by name
-        const ql = `
-    [out:json][timeout:120];
-    area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;
-    (
-      way(area.county)["leisure"="park"];
-      rel(area.county)["leisure"="park"];
-    );
-    out body;
-    >;
-    out skel qt;
-  `.trim();
-
-        // try two mirrors for reliability
+      // ---- Parks COUNT (nodes + ways + relations) — broad tags, dedup by id
+      async function fetchParksCount(countyName) {
         const endpoints = [
           "https://overpass.kumi.systems/api/interpreter",
           "https://overpass-api.de/api/interpreter",
         ];
+        const areas = [
+          `area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
+          `area["name"="${countyName}"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
+        ];
+        const include = `
+        (
+          node(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
+          way(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
+          rel(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
 
-        let lastErr;
+          node(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
+          way(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
+          rel(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
+
+          node(area.county)["natural"~"^(wood|grassland)$"];
+          way(area.county)["natural"~"^(wood|grassland)$"];
+          rel(area.county)["natural"~"^(wood|grassland)$"];
+        );
+      `;
         for (const url of endpoints) {
-          try {
-            const resp = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: "data=" + encodeURIComponent(ql),
-            });
-            if (!resp.ok) {
-              lastErr = new Error("HTTP " + resp.status);
-              continue;
-            }
-
-            const osmJson = await resp.json();
-            const gj = osmtogeojson(osmJson);
-
-            // polygon-only
-            const polys = {
-              type: "FeatureCollection",
-              features: (gj.features || []).filter(
-                (f) =>
-                  f.geometry &&
-                  (f.geometry.type === "Polygon" ||
-                    f.geometry.type === "MultiPolygon")
-              ),
-            };
-
-            const totalSqM = polys.features.reduce(
-              (sum, f) => sum + turf.area(f),
-              0
-            );
-            return totalSqM * 10.7639; // m² -> ft²
-          } catch (e) {
-            lastErr = e; // try next endpoint
+          for (const a of areas) {
+            const ql = `[out:json][timeout:120]; ${a} ${include} out ids;`;
+            try {
+              const r = await fetch(url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: "data=" + encodeURIComponent(ql),
+              });
+              if (!r.ok) continue;
+              const json = await r.json();
+              const ids = new Set(
+                (json.elements || []).map((e) => e.type + ":" + e.id)
+              );
+              return ids.size;
+            } catch {}
           }
         }
-        throw lastErr || new Error("Overpass failed");
+        return 0;
       }
 
-      // Placeholder for later — will fetch and compute green space area
-      // Fetch total PARKS area (sq ft) inside a Kentucky county using Overpass
-      // countyName should be plain (e.g., "Fayette", "Jefferson")
-      async function fetchParksAreaSqFt(countyName) {
-        // Overpass QL: find KY, then the county admin area, then all parks within it
-        const ql = `
-    [out:json][timeout:120];
-    area["ISO3166-2"="US-KY"]->.ky;
-    area.ky["boundary"="administrative"]["admin_level"="6"]["name"="${countyName} County"]->.county;
-    (
-      way(area.county)["leisure"="park"];
-      rel(area.county)["leisure"="park"];
-    );
-    out body;
-    >;
-    out skel qt;
-  `.trim();
-
-        const resp = await fetch("https://overpass-api.de/api/interpreter", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: "data=" + encodeURIComponent(ql),
-        });
-        if (!resp.ok) throw new Error("Overpass error " + resp.status);
-
-        const osmJson = await resp.json();
-
-        // Convert OSM JSON -> GeoJSON
-        const gj = osmtogeojson(osmJson);
-
-        // Keep only polygons
-        const polys = {
-          type: "FeatureCollection",
-          features: gj.features.filter(
-            (f) =>
-              f.geometry &&
-              (f.geometry.type === "Polygon" ||
-                f.geometry.type === "MultiPolygon")
-          ),
-        };
-
-        // Sum area (m²) and convert to ft²
-        const totalSqM = polys.features.reduce(
-          (sum, f) => sum + turf.area(f),
-          0
+      // ---- OSM AREA (polygons only) — broad, with exclusions; returns 0 if none
+      async function fetchParksAreaSqFt_OSM(countyName) {
+        const endpoints = [
+          "https://overpass.kumi.systems/api/interpreter",
+          "https://overpass-api.de/api/interpreter",
+        ];
+        const areas = [
+          `area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
+          `area["name"="${countyName}"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
+        ];
+        const include = `
+        (
+          way(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
+          rel(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
+          way(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
+          rel(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
+          way(area.county)["natural"~"^(wood|grassland)$"];
+          rel(area.county)["natural"~"^(wood|grassland)$"];
         );
-        const totalSqFt = totalSqM * 10.7639;
+      `;
+        for (const url of endpoints) {
+          for (const a of areas) {
+            try {
+              const ql = `[out:json][timeout:120]; ${a} ${include} out geom;`;
+              const resp = await fetch(url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: "data=" + encodeURIComponent(ql),
+              });
+              if (!resp.ok) continue;
+              const osm = await resp.json();
+              const gj = osmtogeojson(osm);
 
-        // Return a plain number (can be 0 if no parks tagged)
-        return totalSqFt;
+              const features = (gj.features || []).filter((f) => {
+                const poly =
+                  f.geometry &&
+                  (f.geometry.type === "Polygon" ||
+                    f.geometry.type === "MultiPolygon");
+                if (!poly) return false;
+                const p = f.properties || {};
+                const leisure = (p.leisure || "").toLowerCase();
+                const landuse = (p.landuse || "").toLowerCase();
+                const natural = (p.natural || "").toLowerCase();
+                const access = (p.access || "").toLowerCase();
+                const excluded =
+                  leisure === "golf_course" ||
+                  landuse === "cemetery" ||
+                  ["industrial", "commercial", "residential"].includes(
+                    landuse
+                  ) ||
+                  natural === "wetland" ||
+                  access === "private";
+                return !excluded;
+              });
+
+              if (!features.length) continue;
+              const totalSqM = features.reduce(
+                (sum, f) => sum + turf.area(f),
+                0
+              );
+              return totalSqM * 10.7639;
+            } catch {}
+          }
+        }
+        return 0;
       }
 
+      async function fetchParksAreaSqFt_ESRI(countyName) {
+        const ESRI_LAYERS = [
+          {
+            url: "https://livingatlas.arcgis.com/arcgis/rest/services/USA_Parks/MapServer/0",
+            where: "1=1",
+          },
+        ];
+        const countyGeom = await fetchCountyGeoJSON(countyName);
+        const esriGeom = geojsonToEsriRings(countyGeom);
+
+        let totalSqM = 0;
+        for (const layer of ESRI_LAYERS) {
+          const qs = new URLSearchParams({
+            f: "geojson",
+            where: layer.where,
+            geometry: JSON.stringify(esriGeom),
+            geometryType: "esriGeometryPolygon",
+            spatialRel: "esriSpatialRelIntersects",
+            outFields: "*",
+            returnGeometry: "true",
+            inSR: "4326",
+            outSR: "4326",
+          });
+
+          try {
+            const r = await fetch(`${layer.url}/query?${qs.toString()}`);
+            if (!r.ok) continue;
+            const geojson = await r.json();
+            geojson.features.forEach((f) => {
+              // optional: exclude golf, cemeteries if needed
+              totalSqM += turf.area(f);
+            });
+          } catch {
+            // skip layer on error
+          }
+        }
+        return totalSqM * 10.7639; // convert to ft²
+      }
+
+      // ---- Unified: try Esri first, then OSM
+      async function fetchGreenAreaSqFt(countyName) {
+        try {
+          const esri = await fetchParksAreaSqFt_ESRI(countyName);
+          if (esri > 0) return esri;
+        } catch {}
+        return fetchParksAreaSqFt_OSM(countyName);
+      }
+
+      // ---- Submit
       document.getElementById("form").addEventListener("submit", async (e) => {
         e.preventDefault();
         if (!county.value) return;
@@ -491,41 +549,46 @@
         result.classList.add("show");
         countyName.textContent = name + " County";
         popEl.textContent = "…";
+        parkCountEl.textContent = "loading…";
         greenEl.textContent = "loading…";
         perEl.textContent = "loading…";
+        coverageNote.classList.add("hidden");
         calc.disabled = true;
 
         try {
-          // 1. Census population
+          // 1) Census population
           const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E&for=county:${fips}&in=state:21`;
           const resp = await fetch(url);
           const data = await resp.json();
           const pop = Number((data && data[1] && data[1][1]) || 0);
           popEl.textContent = new Intl.NumberFormat("en-US").format(pop);
 
-          // 2 + 3. Parks area + per-resident calc
+          // 2) Mapped parks (count)
           try {
-            const sqFt = await fetchParksAreaSqFt(name);
-            greenEl.textContent = new Intl.NumberFormat("en-US", {
-              maximumFractionDigits: 0,
-            }).format(Math.round(sqFt));
+            const count = await fetchParksCount(name);
+            parkCountEl.textContent = new Intl.NumberFormat("en-US").format(
+              count
+            );
+          } catch {
+            parkCountEl.textContent = "—";
+          }
 
-            if (pop > 0) {
-              const per = sqFt / pop;
-              perEl.textContent = new Intl.NumberFormat("en-US", {
-                maximumFractionDigits: 1,
-              }).format(per);
-            } else {
-              perEl.textContent = "n/a";
-            }
-          } catch (e) {
-            console.error(e);
-            greenEl.textContent = "error";
-            perEl.textContent = "error";
+          // 3) Green area + per-resident
+          const sqFt = await fetchGreenAreaSqFt(name);
+          greenEl.textContent = fmt0(sqFt);
+          if (pop > 0 && sqFt > 0) {
+            perEl.textContent = fmt1(sqFt / pop);
+            coverageNote.classList.add("hidden");
+          } else {
+            perEl.textContent = "n/a";
+            if (sqFt === 0) coverageNote.classList.remove("hidden");
           }
         } catch (err) {
           console.error(err);
           popEl.textContent = "error";
+          greenEl.textContent = "error";
+          perEl.textContent = "error";
+          parkCountEl.textContent = "—";
         } finally {
           calc.disabled = false;
         }
