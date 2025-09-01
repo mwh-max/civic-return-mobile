@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Civic Return</title>
+    <meta
+      name="description"
+      content="Find your green space per resident in Kentucky."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f6f2e9; /* warm paper */
+        --bg-2: #e9dfc9; /* sidebar tint */
+        --ink: #21301f; /* deep green text */
+        --accent: #7f9b6a; /* button green */
+        --accent-ink: #f6f2e9; /* button text */
+        --card: #fffdf8; /* card surface */
+        --muted: #65725f; /* secondary text */
+        --border: #e4ddcf; /* subtle borders */
+        --focus: #3b6d3e; /* focus ring */
+        --radius: 16px;
+        --shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: Montserrat, system-ui, -apple-system, Segoe UI, Roboto,
+          "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
+          "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+        color: var(--ink);
+        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+      }
+
+      .container {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 20px 16px 64px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 24px 20px;
+        box-shadow: var(--shadow);
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 8px;
+        justify-content: center;
+        text-align: center;
+      }
+
+      .logo {
+        width: 96px;
+        height: 96px;
+        border-radius: 12px;
+        object-fit: contain;
+        background: #e7e4d9;
+      }
+      .brand h1 {
+        font-size: 28px;
+        font-weight: 900;
+        letter-spacing: 0.5px;
+        margin: 0;
+      }
+
+      .lead {
+        text-align: center;
+        margin: 12px 8px 24px;
+      }
+      .lead h2 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.15;
+        font-weight: 800;
+      }
+      .lead p {
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .form {
+        display: grid;
+        gap: 14px;
+        margin-top: 16px;
+      }
+
+      label {
+        font-weight: 600;
+      }
+
+      select,
+      button {
+        width: 100%;
+        font: inherit;
+        border-radius: 12px;
+        padding: 14px 12px;
+        border: 1px solid var(--border);
+        background: white;
+        transition: box-shadow 0.2s ease, transform 0.02s ease;
+      }
+
+      select:focus,
+      button:focus {
+        outline: none;
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--focus) 35%, white);
+        border-color: var(--focus);
+      }
+
+      .button {
+        background: var(--accent);
+        color: var(--accent-ink);
+        border: none;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+      }
+
+      .button[disabled] {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .button:active {
+        transform: translateY(1px);
+      }
+
+      .rule {
+        border: 0;
+        height: 1px;
+        background: var(--border);
+        margin: 24px 0;
+      }
+
+      .result {
+        display: none;
+        margin-top: 12px;
+        background: #f3f0e6;
+        border: 1px dashed var(--border);
+        padding: 16px;
+        border-radius: 12px;
+      }
+      .result.show {
+        display: block;
+      }
+      .result .big {
+        font-size: 22px;
+        font-weight: 800;
+        margin: 0 0 6px;
+      }
+      .result .small {
+        color: var(--muted);
+        margin: 0;
+      }
+
+      footer {
+        margin-top: 28px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      @media (min-width: 720px) {
+        .container {
+          padding-top: 40px;
+        }
+        .brand h1 {
+          font-size: 32px;
+        }
+        .lead h2 {
+          font-size: 32px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <section class="card" aria-labelledby="title">
+        <header>
+          <!-- Swap src with your real logo path -->
+          <img
+            class="logo"
+            src="assets/civic-return-logo.png"
+            alt="Civic Return logo"
+          />
+          <div class="brand">
+            <h1 id="title">CIVIC RETURN</h1>
+          </div>
+        </header>
+
+        <div class="lead">
+          <h2>Find Your Green Space</h2>
+          <p>
+            Select your county in Kentucky to calculate your share of public
+            green space.
+          </p>
+        </div>
+
+        <form class="form" id="form" novalidate>
+          <label for="county">County</label>
+          <select id="county" required>
+            <option value="" selected>Select a county…</option>
+            <!-- Minimal starter list; replace with full KY list when ready -->
+            <option value="001">Adair</option>
+            <option value="067">Fayette</option>
+            <option value="111">Jefferson</option>
+            <option value="201">Union</option>
+            <option value="239">Woodford</option>
+          </select>
+          <button class="button" id="calc" disabled>Calculate</button>
+        </form>
+
+        <div id="result" class="result" role="status" aria-live="polite">
+          <p class="big" id="big">Coming soon</p>
+          <p class="small">
+            We’ll show green space (sq ft) per resident using Census +
+            OpenStreetMap.
+          </p>
+        </div>
+
+        <hr class="rule" />
+        <footer>
+          <small
+            >Made by Sleeping Bear • Method: OSM (parks) + Census ACS
+            (population)</small
+          >
+        </footer>
+      </section>
+    </main>
+
+    <script>
+      const county = document.getElementById("county");
+      const calc = document.getElementById("calc");
+      const result = document.getElementById("result");
+      const big = document.getElementById("big");
+
+      // Enable button once a county is chosen
+      county.addEventListener("change", () => {
+        calc.disabled = !county.value;
+      });
+
+      // Placeholder calculate — just shows a friendly stub for now
+      document.getElementById("form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (!county.value) return;
+        const name = county.options[county.selectedIndex].textContent;
+        result.classList.add("show");
+        big.textContent = `Working… fetching data for ${name}`;
+        // Later: replace with fetch('/api/greenspace?state=21&county=' + county.value)
+        // and then render the computed sq ft per resident.
+      });
+    </script>
+  </body>
+</html>
