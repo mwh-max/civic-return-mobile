@@ -468,28 +468,41 @@
 
       // --- Existing helpers
       async function fetchCountyGeoJSON(countyName) {
-        const ql = `
-          [out:json][timeout:90];
-          rel["boundary"="administrative"]["admin_level"="6"]
-              ["name"~"^${countyName}( County)?$"]["is_in:state_code"="KY"];
-          out geom;`;
-        const resp = await fetch(
+        const endpoints = [
           "https://overpass.kumi.systems/api/interpreter",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: "data=" + encodeURIComponent(ql),
-          }
-        );
-        if (!resp.ok) throw new Error("County boundary fetch failed");
-        const osm = await resp.json();
-        const gj = osmtogeojson(osm);
-        const polys = (gj.features || []).filter(
-          (f) => f.geometry && /Polygon/.test(f.geometry.type)
-        );
-        if (!polys.length) throw new Error("County boundary not found");
-        polys.sort((a, b) => turf.area(b) - turf.area(a));
-        return polys[0].geometry;
+          "https://overpass-api.de/api/interpreter",
+        ];
+
+        // Use the Kentucky state area, then find the admin_level=6 county by name
+        const ql = (name) => `
+    [out:json][timeout:120];
+    area["name"="Kentucky"]["boundary"="administrative"]["admin_level"="4"]->.ky;
+    rel(area.ky)["boundary"="administrative"]["admin_level"="6"]["name"~"^${name}( County)?$"];
+    out geom;
+  `;
+
+        for (const url of endpoints) {
+          try {
+            const resp = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: "data=" + encodeURIComponent(ql(countyName)),
+            });
+            if (!resp.ok) continue;
+
+            const osm = await resp.json();
+            const gj = osmtogeojson(osm);
+            const polys = (gj.features || []).filter(
+              (f) => f.geometry && /Polygon/.test(f.geometry.type)
+            );
+            if (polys.length) {
+              // pick the largest polygon (handles multiparts)
+              polys.sort((a, b) => turf.area(b) - turf.area(a));
+              return polys[0].geometry;
+            }
+          } catch {}
+        }
+        throw new Error("County boundary not found");
       }
 
       async function fetchParksCount(countyName) {
