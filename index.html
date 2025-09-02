@@ -328,6 +328,16 @@
           <p class="metric" id="npscount">
             National Park Service sites: <span>–</span>
           </p>
+
+          <!-- New: Major parks touching county (NPS boundaries + KY State Parks) -->
+          <p class="metric" id="majorparks">
+            Major parks touching county (NPS + KY): <span>–</span>
+          </p>
+          <details id="majorparks-details" class="hidden">
+            <summary>Show park names</summary>
+            <ul id="majorparks-list" style="margin: 8px 0 0 18px"></ul>
+          </details>
+
           <p class="metric" id="density">
             Park sites per 10k residents: <span>–</span>
           </p>
@@ -351,6 +361,7 @@
 
     <script src="https://unpkg.com/osmtogeojson@2.2.13/osmtogeojson.js"></script>
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
     <script>
       // ---- DOM
       const county = document.getElementById("county");
@@ -369,6 +380,13 @@
         .querySelector("span");
       const noteEl = document.getElementById("note");
 
+      // New DOM hooks
+      const majorParksEl = document
+        .getElementById("majorparks")
+        .querySelector("span");
+      const majorParksDetails = document.getElementById("majorparks-details");
+      const majorParksList = document.getElementById("majorparks-list");
+
       const fmt0 = (n) =>
         new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
           Math.round(n)
@@ -380,7 +398,75 @@
         calc.disabled = !county.value;
       });
 
-      // --- Helpers
+      // --- NEW: ArcGIS constants + helpers (for boundary-based major parks)
+      const LAYER_URL_NPS_BOUNDARIES =
+        "https://services1.arcgis.com/fBc8EJBxQRMcHlei/ArcGIS/rest/services/NPS_Park_Boundaries/FeatureServer/0";
+      const LAYER_URL_KY_STATE_PARKS =
+        "https://services.arcgis.com/PwY9M7h4QWqZ4d8W/ArcGIS/rest/services/KY_State_Park_Boundaries/FeatureServer/0";
+
+      const withTimeout = (ms, p) =>
+        Promise.race([
+          p,
+          new Promise((_, r) => setTimeout(() => r(new Error("timeout")), ms)),
+        ]);
+
+      function geojsonToEsriRings(geo) {
+        const toRings = (coords) =>
+          coords.map((r) => r.map(([x, y]) => [x, y]));
+        if (geo.type === "Polygon")
+          return {
+            rings: toRings(geo.coordinates),
+            spatialReference: { wkid: 4326 },
+          };
+        if (geo.type === "MultiPolygon") {
+          const rings = [];
+          geo.coordinates.forEach((poly) =>
+            poly.forEach((r) => rings.push(r.map(([x, y]) => [x, y])))
+          );
+          return { rings, spatialReference: { wkid: 4326 } };
+        }
+        throw new Error("Not a polygon");
+      }
+
+      async function queryArcGISIntersects(
+        layerUrl,
+        countyGeom,
+        outFields = ["NAME", "PARK_NAME", "UNIT_NAME", "FULLNAME", "TYPE"]
+      ) {
+        const rings = geojsonToEsriRings(countyGeom);
+        const params = new URLSearchParams({
+          f: "geojson",
+          where: "1=1",
+          geometry: JSON.stringify(rings),
+          geometryType: "esriGeometryPolygon",
+          spatialRel: "esriSpatialRelIntersects",
+          outFields: outFields.join(","),
+          returnGeometry: "true",
+          inSR: "4326",
+          outSR: "4326",
+        });
+        const resp = await withTimeout(
+          25000,
+          fetch(`${layerUrl}/query?${params.toString()}`)
+        );
+        if (!resp.ok) throw new Error("ArcGIS query failed");
+        return resp.json();
+      }
+
+      function parkNameFromProps(p = {}) {
+        return (
+          p.FULLNAME ||
+          p.UNIT_NAME ||
+          p.PARK_NAME ||
+          p.NAME ||
+          p.Name ||
+          ""
+        )
+          .toString()
+          .trim();
+      }
+
+      // --- Existing helpers
       async function fetchCountyGeoJSON(countyName) {
         const ql = `
           [out:json][timeout:90];
@@ -479,6 +565,62 @@
         return count;
       }
 
+      // KY overrides to ensure cross-county NPS units appear
+      const NPS_OVERRIDES_KY = {
+        "Mammoth Cave National Park": ["Barren", "Edmonson", "Hart"],
+        "Cumberland Gap National Historical Park": ["Bell", "Harlan"],
+        "Big South Fork National River and Recreation Area": [
+          "McCreary",
+          "Wayne",
+        ],
+        "Abraham Lincoln Birthplace National Historical Park": ["LaRue"],
+        "Camp Nelson National Monument": ["Jessamine"],
+        "Mill Springs Battlefield National Monument": ["Pulaski", "Wayne"],
+        "Fort Donelson National Battlefield": ["Calloway"], // Fort Heiman unit on KY side
+      };
+
+      async function fetchMajorParksTouchingCounty(countyName) {
+        const countyGeom = await fetchCountyGeoJSON(countyName);
+        const names = new Set();
+
+        // 1) NPS boundary polygons
+        try {
+          if (LAYER_URL_NPS_BOUNDARIES) {
+            const gj = await queryArcGISIntersects(
+              LAYER_URL_NPS_BOUNDARIES,
+              countyGeom,
+              ["FULLNAME", "UNIT_CODE"]
+            );
+            for (const f of gj.features || []) {
+              const nm = parkNameFromProps(f.properties);
+              if (nm) names.add(nm);
+            }
+          }
+        } catch {}
+
+        // 2) KY State Park boundaries
+        try {
+          if (LAYER_URL_KY_STATE_PARKS) {
+            const gj = await queryArcGISIntersects(
+              LAYER_URL_KY_STATE_PARKS,
+              countyGeom,
+              ["PARK_NAME", "TYPE"]
+            );
+            for (const f of gj.features || []) {
+              const nm = parkNameFromProps(f.properties);
+              if (nm) names.add(nm + " (State Park)");
+            }
+          }
+        } catch {}
+
+        // 3) Overrides (guarantee key NPS units by county)
+        for (const [park, counties] of Object.entries(NPS_OVERRIDES_KY)) {
+          if (counties.includes(countyName)) names.add(park);
+        }
+
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+      }
+
       // ---- Submit
       document.getElementById("form").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -494,6 +636,12 @@
         npsCountEl.textContent = "loading…";
         densityEl.textContent = "loading…";
         noteEl.classList.add("hidden");
+
+        // reset major parks UI
+        majorParksEl.textContent = "loading…";
+        majorParksDetails.classList.add("hidden");
+        majorParksList.innerHTML = "";
+
         calc.disabled = true;
 
         let popNum = 0,
@@ -543,6 +691,28 @@
           noteEl.textContent =
             "Population not available from ACS for this county right now.";
           noteEl.classList.remove("hidden");
+        }
+
+        // NEW: Major parks by county overlap (NPS boundaries + KY State Parks + overrides)
+        try {
+          const parks = await fetchMajorParksTouchingCounty(name);
+          majorParksEl.textContent = new Intl.NumberFormat("en-US").format(
+            parks.length
+          );
+          if (parks.length) {
+            majorParksDetails.classList.remove("hidden");
+            majorParksList.innerHTML = parks
+              .map(
+                (n) =>
+                  `<li>${n.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</li>`
+              )
+              .join("");
+          } else {
+            majorParksDetails.classList.add("hidden");
+          }
+        } catch {
+          majorParksEl.textContent = "—";
+          majorParksDetails.classList.add("hidden");
         }
 
         calc.disabled = false;
