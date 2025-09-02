@@ -6,7 +6,7 @@
     <title>Civic Return</title>
     <meta
       name="description"
-      content="Find your green space per resident in Kentucky."
+      content="Find public park access signals in Kentucky."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -181,10 +181,10 @@
         </header>
 
         <div class="lead">
-          <h2>Find Your Green Space</h2>
+          <h2>Find Parks & Access Signals</h2>
           <p>
-            Select your county in Kentucky to calculate your share of public
-            green space.
+            Select your Kentucky county to see park-site signals and per-capita
+            access.
           </p>
         </div>
 
@@ -192,6 +192,7 @@
           <label for="county">County</label>
           <select id="county" required>
             <option value="" selected>Select a county…</option>
+            <!-- full KY list intact (FIPS codes) -->
             <option value="001">Adair</option>
             <option value="003">Allen</option>
             <option value="005">Anderson</option>
@@ -313,24 +314,28 @@
             <option value="237">Wolfe</option>
             <option value="239">Woodford</option>
           </select>
-          <button class="button" id="calc" disabled>Calculate</button>
+          <button class="button" id="calc" type="submit" disabled>
+            Calculate
+          </button>
         </form>
 
         <div id="result" class="result" role="status" aria-live="polite">
           <h3 id="county-name">Results</h3>
           <p class="metric" id="pop">Population: <span>–</span></p>
-          <p class="metric" id="parkcount">Mapped park sites: <span>–</span></p>
-          <p class="metric" id="green">Green space area: <span>–</span></p>
-          <p class="metric" id="per">Sq ft per resident: <span>–</span></p>
-          <p id="coverageNote" class="note hidden">
-            We couldn’t find mapped park-land areas in OpenStreetMap for this
-            county yet. Parks likely exist, but their boundaries aren’t in the
-            data.
+          <p class="metric" id="parkcount">
+            Mapped park sites (OSM): <span>–</span>
           </p>
+          <p class="metric" id="npscount">
+            National Park Service sites: <span>–</span>
+          </p>
+          <p class="metric" id="density">
+            Park sites per 10k residents: <span>–</span>
+          </p>
+          <p id="note" class="note hidden"></p>
           <p class="note">
-            Sources: Census ACS (population). OpenStreetMap (mapped parks and
-            green areas). Area improves as boundary data is added. Kentucky-only
-            scope.
+            Method: OSM leisure tags + NPS parks (KY only). Per-capita density
+            uses ACS population. Small-population counties and OSM mapping gaps
+            can skew density up or down.
           </p>
         </div>
 
@@ -338,30 +343,31 @@
         <footer>
           <small
             >Made in Kentucky by
-            <a href="https://sleepingbear.us">Sleeping Bear Labs</a> • Method:
-            OSM polygons (parks & green) + mapped parks count</small
+            <a href="https://sleepingbear.us">Sleeping Bear Labs</a></small
           >
         </footer>
       </section>
     </main>
 
-    <!-- libs MUST be before your script -->
     <script src="https://unpkg.com/osmtogeojson@2.2.13/osmtogeojson.js"></script>
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-
     <script>
       // ---- DOM
       const county = document.getElementById("county");
       const calc = document.getElementById("calc");
       const result = document.getElementById("result");
-      const countyName = document.getElementById("county-name");
+      const countyNameEl = document.getElementById("county-name");
       const popEl = document.getElementById("pop").querySelector("span");
       const parkCountEl = document
         .getElementById("parkcount")
         .querySelector("span");
-      const greenEl = document.getElementById("green").querySelector("span");
-      const perEl = document.getElementById("per").querySelector("span");
-      const coverageNote = document.getElementById("coverageNote");
+      const npsCountEl = document
+        .getElementById("npscount")
+        .querySelector("span");
+      const densityEl = document
+        .getElementById("density")
+        .querySelector("span");
+      const noteEl = document.getElementById("note");
 
       const fmt0 = (n) =>
         new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
@@ -374,35 +380,13 @@
         calc.disabled = !county.value;
       });
 
-      // Convert a GeoJSON Polygon/MultiPolygon to Esri rings
-      function geojsonToEsriRings(geo) {
-        const toRings = (coords) =>
-          coords.map((ring) => ring.map(([x, y]) => [x, y]));
-        if (geo.type === "Polygon") {
-          return {
-            rings: toRings(geo.coordinates),
-            spatialReference: { wkid: 4326 },
-          };
-        }
-        if (geo.type === "MultiPolygon") {
-          const rings = [];
-          geo.coordinates.forEach((poly) =>
-            poly.forEach((ring) => rings.push(ring.map(([x, y]) => [x, y])))
-          );
-          return { rings, spatialReference: { wkid: 4326 } };
-        }
-        throw new Error("Not a polygon");
-      }
-
-      // Fetch county boundary (GeoJSON) via Overpass (KY only)
+      // --- Helpers
       async function fetchCountyGeoJSON(countyName) {
         const ql = `
-    [out:json][timeout:90];
-    rel["boundary"="administrative"]["admin_level"="6"]
-        ["name"~"^${countyName}( County)?$"]
-        ["is_in:state_code"="KY"];
-    out geom;
-  `;
+          [out:json][timeout:90];
+          rel["boundary"="administrative"]["admin_level"="6"]
+              ["name"~"^${countyName}( County)?$"]["is_in:state_code"="KY"];
+          out geom;`;
         const resp = await fetch(
           "https://overpass.kumi.systems/api/interpreter",
           {
@@ -418,14 +402,10 @@
           (f) => f.geometry && /Polygon/.test(f.geometry.type)
         );
         if (!polys.length) throw new Error("County boundary not found");
-        polys.sort((a, b) => turf.area(b) - turf.area(a)); // largest polygon wins
+        polys.sort((a, b) => turf.area(b) - turf.area(a));
         return polys[0].geometry;
       }
 
-      // ---- Parks COUNT (nodes + ways + relations) — broad tags, dedup by id
-      // Count mapped park sites (unique names) in a KY county.
-      // Includes leisure = park|garden|recreation_ground|nature_reserve|village_green|common
-      // Excludes golf courses and pitches. Groups by 'name' when present.
       async function fetchParksCount(countyName) {
         const endpoints = [
           "https://overpass.kumi.systems/api/interpreter",
@@ -435,39 +415,28 @@
           `area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
           `area["name"="${countyName}"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
         ];
-
-        // Leisure-only (no landuse/natural here to avoid overcounting)
         const include = `
-    (
-      node(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]
-                           ["leisure"!="golf_course"]["leisure"!="pitch"];
-      way(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]
-                          ["leisure"!="golf_course"]["leisure"!="pitch"];
-      rel(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]
-                          ["leisure"!="golf_course"]["leisure"!="pitch"];
-    );
-  `;
-
+          (
+            node(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]["leisure"!="golf_course"]["leisure"!="pitch"];
+            way(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]["leisure"!="golf_course"]["leisure"!="pitch"];
+            rel(area.county)["leisure"~"^(park|garden|recreation_ground|nature_reserve|village_green|common)$"]["leisure"!="golf_course"]["leisure"!="pitch"];
+          );`;
         for (const url of endpoints) {
           for (const a of areas) {
-            const ql = `[out:json][timeout:120]; ${a} ${include} out tags;`; // need tags for 'name'
+            const ql = `[out:json][timeout:120]; ${a} ${include} out tags;`;
             try {
-              const resp = await fetch(url, {
+              const r = await fetch(url, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/x-www-form-urlencoded",
                 },
                 body: "data=" + encodeURIComponent(ql),
               });
-              if (!resp.ok) continue;
-
-              const json = await resp.json();
+              if (!r.ok) continue;
+              const json = await r.json();
               const els = json.elements || [];
-
-              // Normalize names and group; if no name, fall back to unique id
-              const byName = new Set();
-              const byId = new Set();
-
+              const byName = new Set(),
+                byId = new Set();
               for (const e of els) {
                 const name = ((e.tags && e.tags.name) || "")
                   .trim()
@@ -475,151 +444,39 @@
                 if (name) byName.add(name);
                 else byId.add(`${e.type}:${e.id}`);
               }
-
-              // Prefer names (unique sites); plus unnamed leftovers by id
               return byName.size + byId.size;
-            } catch {
-              /* try next */
-            }
-          }
-        }
-        return 0;
-      }
-
-      // ---- OSM AREA (polygons only) — broad, with exclusions; returns 0 if none
-      async function fetchParksAreaSqFt_OSM(countyName) {
-        const endpoints = [
-          "https://overpass.kumi.systems/api/interpreter",
-          "https://overpass-api.de/api/interpreter",
-        ];
-        const areas = [
-          `area["name"="${countyName} County"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
-          `area["name"="${countyName}"]["boundary"="administrative"]["admin_level"="6"]->.county;`,
-        ];
-        const include = `
-        (
-          way(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
-          rel(area.county)["leisure"~"^(park|garden|recreation_ground|pitch|nature_reserve|common|village_green)$"];
-          way(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
-          rel(area.county)["landuse"~"^(grass|recreation_ground|meadow)$"];
-          way(area.county)["natural"~"^(wood|grassland)$"];
-          rel(area.county)["natural"~"^(wood|grassland)$"];
-        );
-      `;
-        for (const url of endpoints) {
-          for (const a of areas) {
-            try {
-              const ql = `[out:json][timeout:120]; ${a} ${include} out geom;`;
-              const resp = await fetch(url, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: "data=" + encodeURIComponent(ql),
-              });
-              if (!resp.ok) continue;
-              const osm = await resp.json();
-              const gj = osmtogeojson(osm);
-
-              const features = (gj.features || []).filter((f) => {
-                const poly =
-                  f.geometry &&
-                  (f.geometry.type === "Polygon" ||
-                    f.geometry.type === "MultiPolygon");
-                if (!poly) return false;
-                const p = f.properties || {};
-                const leisure = (p.leisure || "").toLowerCase();
-                const landuse = (p.landuse || "").toLowerCase();
-                const natural = (p.natural || "").toLowerCase();
-                const access = (p.access || "").toLowerCase();
-                const excluded =
-                  leisure === "golf_course" ||
-                  landuse === "cemetery" ||
-                  ["industrial", "commercial", "residential"].includes(
-                    landuse
-                  ) ||
-                  natural === "wetland" ||
-                  access === "private";
-                return !excluded;
-              });
-
-              if (!features.length) continue;
-              const totalSqM = features.reduce(
-                (sum, f) => sum + turf.area(f),
-                0
-              );
-              return totalSqM * 10.7639;
             } catch {}
           }
         }
         return 0;
       }
 
-      // Esri USA Parks polygons for Kentucky — primary area source
-      // Falls back to OSM if this returns 0 (via fetchGreenAreaSqFt)
-      async function fetchParksAreaSqFt_ESRI(countyName) {
-        const ESRI_LAYERS = [
-          {
-            url: "https://livingatlas.arcgis.com/arcgis/rest/services/USA_Parks/MapServer/0",
-            where: "1=1",
-          },
-          // You can add more layers here later (e.g., protected areas)
-        ];
-
-        // 1) Get county polygon once (GeoJSON) and convert to Esri rings
+      async function fetchNpsParksInCounty(countyName) {
+        const API_KEY = "nCK1ddXDcAzhGM8gEIaksAQRQ50n2zLEjcB5P5a4"; // your key
+        const url = `https://developer.nps.gov/api/v1/parks?stateCode=KY&limit=600&fields=addresses,latLong&api_key=${API_KEY}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("NPS fetch failed");
+        const data = await resp.json();
+        const parks = Array.isArray(data.data) ? data.data : [];
         const countyGeom = await fetchCountyGeoJSON(countyName);
-        const esriGeom = geojsonToEsriRings(countyGeom);
-
-        let totalSqM = 0;
-
-        for (const layer of ESRI_LAYERS) {
-          const qs = new URLSearchParams({
-            f: "geojson",
-            where: layer.where || "1=1",
-            geometry: JSON.stringify(esriGeom),
-            geometryType: "esriGeometryPolygon",
-            spatialRel: "esriSpatialRelIntersects",
-            outFields: "*",
-            returnGeometry: "true",
-            inSR: "4326",
-            outSR: "4326",
-          });
-
-          try {
-            const r = await fetch(`${layer.url}/query?${qs.toString()}`);
-            if (!r.ok) continue;
-            const geojson = await r.json();
-            const features = (geojson.features || []).filter((f) => {
-              // Light exclusions (don’t count golf courses; you can add cemeteries if a layer includes them)
-              const p = f.properties || {};
-              const name = (
-                p.NAME ||
-                p.PARK_NAME ||
-                p.FULLNAME ||
-                ""
-              ).toLowerCase();
-              const type = (p.TYPE || p.CAT || p.OWN_TYPE || "").toLowerCase();
-              if (name.includes("golf") || type.includes("golf")) return false;
-              return true;
-            });
-            features.forEach((f) => {
-              totalSqM += turf.area(f);
-            });
-          } catch {
-            // try next layer
-          }
+        const polygon = {
+          type: "Feature",
+          geometry: countyGeom,
+          properties: {},
+        };
+        let count = 0;
+        for (const p of parks) {
+          const m = (p.latLong || "").match(
+            /lat\s*:\s*([-+]?\d+(?:\.\d+)?)\s*,\s*long\s*:\s*([-+]?\d+(?:\.\d+)?)/i
+          );
+          if (!m) continue;
+          const lat = parseFloat(m[1]),
+            lon = parseFloat(m[2]);
+          if (!isFinite(lat) || !isFinite(lon)) continue;
+          const pt = turf.point([lon, lat]);
+          if (turf.booleanPointInPolygon(pt, polygon)) count++;
         }
-
-        return totalSqM * 10.7639; // m² -> ft²
-      }
-
-      // ---- Unified: try Esri first, then OSM
-      async function fetchGreenAreaSqFt(countyName) {
-        try {
-          const esri = await fetchParksAreaSqFt_ESRI(countyName);
-          if (esri > 0) return esri;
-        } catch {}
-        return fetchParksAreaSqFt_OSM(countyName);
+        return count;
       }
 
       // ---- Submit
@@ -631,51 +488,64 @@
         const fips = county.value;
 
         result.classList.add("show");
-        countyName.textContent = name + " County";
+        countyNameEl.textContent = name + " County";
         popEl.textContent = "…";
         parkCountEl.textContent = "loading…";
-        greenEl.textContent = "loading…";
-        perEl.textContent = "loading…";
-        coverageNote.classList.add("hidden");
+        npsCountEl.textContent = "loading…";
+        densityEl.textContent = "loading…";
+        noteEl.classList.add("hidden");
         calc.disabled = true;
 
+        let popNum = 0,
+          sites = 0;
+
+        // Population (ACS 2023)
         try {
-          // 1) Census population
           const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E&for=county:${fips}&in=state:21`;
           const resp = await fetch(url);
           const data = await resp.json();
-          const pop = Number((data && data[1] && data[1][1]) || 0);
-          popEl.textContent = new Intl.NumberFormat("en-US").format(pop);
-
-          // 2) Mapped parks (count)
-          try {
-            const count = await fetchParksCount(name);
-            parkCountEl.textContent = new Intl.NumberFormat("en-US").format(
-              count
-            );
-          } catch {
-            parkCountEl.textContent = "—";
-          }
-
-          // 3) Green area + per-resident
-          const sqFt = await fetchGreenAreaSqFt(name);
-          greenEl.textContent = fmt0(sqFt);
-          if (pop > 0 && sqFt > 0) {
-            perEl.textContent = fmt1(sqFt / pop);
-            coverageNote.classList.add("hidden");
-          } else {
-            perEl.textContent = "n/a";
-            if (sqFt === 0) coverageNote.classList.remove("hidden");
-          }
-        } catch (err) {
-          console.error(err);
-          popEl.textContent = "error";
-          greenEl.textContent = "error";
-          perEl.textContent = "error";
-          parkCountEl.textContent = "—";
-        } finally {
-          calc.disabled = false;
+          popNum = Number((data && data[1] && data[1][1]) || 0);
+          popEl.textContent = new Intl.NumberFormat("en-US").format(popNum);
+        } catch {
+          popEl.textContent = "—";
         }
+
+        // OSM mapped park sites (count)
+        try {
+          sites = await fetchParksCount(name);
+          parkCountEl.textContent = new Intl.NumberFormat("en-US").format(
+            sites
+          );
+        } catch {
+          parkCountEl.textContent = "—";
+        }
+
+        // NPS sites (point-in-polygon)
+        try {
+          const npsCount = await fetchNpsParksInCounty(name);
+          npsCountEl.textContent = new Intl.NumberFormat("en-US").format(
+            npsCount
+          );
+        } catch {
+          npsCountEl.textContent = "—";
+        }
+
+        // Density (always computable when pop > 0)
+        if (popNum > 0) {
+          densityEl.textContent = ((sites / popNum) * 10000).toFixed(1);
+          if (popNum < 5000) {
+            noteEl.textContent =
+              "Per-capita density can swing in small-population counties.";
+            noteEl.classList.remove("hidden");
+          }
+        } else {
+          densityEl.textContent = "—";
+          noteEl.textContent =
+            "Population not available from ACS for this county right now.";
+          noteEl.classList.remove("hidden");
+        }
+
+        calc.disabled = false;
       });
     </script>
   </body>
